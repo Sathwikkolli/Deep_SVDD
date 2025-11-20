@@ -1,0 +1,15 @@
+# Ignore embedding files
+embeddings/
+*.npy
+
+# Ignore model checkpoints
+models/
+*.pt
+*.pth
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+*.log
