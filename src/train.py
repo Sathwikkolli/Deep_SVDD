@@ -6,6 +6,7 @@ import torch
 from deep_svdd import DeepSVDD
 from utils_data import load_embeddings, create_train_loader
 from utils_svdd import compute_threshold_from_real, evaluate_fixed_threshold, compute_eer
+from visualization import visualize   
 
 # --------------------------
 # Configuration
@@ -57,7 +58,7 @@ def main():
 
     eer, eer_thr, fpr_eer, fnr_eer = compute_eer(dist_real, dist_spoof)
 
-    # print
+    # print metrics
     print("\n=========== FIXED THRESHOLD METRICS ===========")
     print("Threshold:", thr)
     print("TPR:", metrics["TPR"])
@@ -98,6 +99,11 @@ def main():
 
     print("\nSaved model to:", model_path)
     print("Saved results to:", result_file)
+
+    # --------------------------
+    # RUN VISUALIZATIONS HERE
+    # --------------------------
+    visualize(svdd, X_eval_real, X_eval_spoof)
 
 
 if __name__ == "__main__":
