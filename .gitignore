@@ -2,10 +2,13 @@
 embeddings/
 *.npy
 
-# Ignore model checkpoints
-models/
-*.pt
-*.pth
+# Ignore ONLY model checkpoint files, NOT the plots folder
+models/*.pt
+models/*.pth
+
+# Allow plot images inside models/plots/
+!models/plots/
+!models/plots/*
 
 # Python cache
 __pycache__/
