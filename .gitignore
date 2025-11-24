@@ -1,15 +1,23 @@
-# Ignore embedding files
+# ========== EMBEDDINGS (IGNORE) ==========
 embeddings/
 *.npy
 
-# Ignore model checkpoints
-models/
-*.pt
-*.pth
+# ========== MODEL CHECKPOINTS (IGNORE ONLY WEIGHTS) ==========
+models/*.pt
+models/*.pth
 
-# Python cache
+# (Allow everything else inside models/, like plots and results)
+!models/
+!models/**/
+!models/*.txt
+!models/*.png
+
+# ========== PYTHON CACHE ==========
 __pycache__/
 *.pyc
 
-# Logs
+# ========== LOGS ==========
 *.log
+
+# ========== JUNK FILES ==========
+.DS_Store
