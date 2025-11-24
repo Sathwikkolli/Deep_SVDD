@@ -1,79 +1,147 @@
 # src/utils_svdd.py
+
 import numpy as np
 import torch
+import torch.nn as nn
+from sklearn.metrics import roc_curve
 
 
 # ----------------------------------------------------
-# Compute distances from Deep SVDD model
+# Autoencoder pretrain (UPDATED — device argument added)
 # ----------------------------------------------------
-def compute_scores(model, center_c, X, device):
-    model.net.eval()
+def pretrain_autoencoder(ae, train_loader, epochs, lr, weight_decay, device="cuda"):
+    device = torch.device(device)
+    ae = ae.to(device)
+    ae.train()
 
-    with torch.no_grad():
-        X = torch.tensor(X, dtype=torch.float32).to(device)
-        Z = model.net(X)
-        dist = torch.sum((Z - center_c) ** 2, dim=1)
+    optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=weight_decay)
+    criterion = nn.MSELoss()
 
-    return dist.cpu().numpy()
+    for ep in range(1, epochs + 1):
+        running_loss = 0.0
+        n = 0
+
+        for (x_batch,) in train_loader:
+            x_batch = x_batch.to(device)
+
+            optimizer.zero_grad()
+            x_rec = ae(x_batch)
+            loss = criterion(x_rec, x_batch)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * x_batch.size(0)
+            n += x_batch.size(0)
+
+        ep_loss = running_loss / n
+        print(f"[AE] Epoch {ep}/{epochs} Loss={ep_loss:.6f}")
+
+    return ae
 
 
 # ----------------------------------------------------
-# Threshold from REAL distribution
+# Deep SVDD training
+# ----------------------------------------------------
+def train_deep_svdd(model, train_loader, epochs, lr, weight_decay):
+    device = model.device
+    net = model.net
+    net.train()
+
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
+
+    for ep in range(1, epochs + 1):
+        running_loss = 0.0
+        n_samples = 0
+        epoch_dists = []
+
+        for (x_batch,) in train_loader:
+            x_batch = x_batch.to(device)
+            z = net(x_batch)
+
+            # squared distance to center
+            dist = torch.sum((z - model.c) ** 2, dim=1)
+            epoch_dists.append(dist.detach())
+
+            if model.objective == "one-class":
+                loss = torch.mean(dist)
+            else:  # soft-boundary
+                scores = dist - (model.R ** 2)
+                loss = (model.R ** 2) + (1.0 / model.nu) * torch.mean(
+                    torch.clamp(scores, min=0.0)
+                )
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * x_batch.size(0)
+            n_samples += x_batch.size(0)
+
+        # update R for soft-boundary
+        if model.objective == "soft-boundary":
+            all_dist = torch.cat(epoch_dists)
+            model.R = torch.quantile(torch.sqrt(all_dist), 1.0 - model.nu).detach()
+
+        ep_loss = running_loss / n_samples
+        print(f"[SVDD] Ep {ep}/{epochs} Loss={ep_loss:.6f} R={model.R.item():.4f}")
+
+    return model
+
+
+# ----------------------------------------------------
+# Compute anomaly scores
+# ----------------------------------------------------
+@torch.no_grad()
+def compute_scores(model, loader):
+    device = model.device
+    net = model.net
+    net.eval()
+
+    all_scores = []
+
+    for (x_batch,) in loader:
+        x_batch = x_batch.to(device)
+        z = net(x_batch)
+        dist = torch.sum((z - model.c) ** 2, dim=1)
+        all_scores.append(dist.cpu().numpy())
+
+    return np.concatenate(all_scores, axis=0)
+
+
+# ----------------------------------------------------
+# Thresholds and metrics
 # ----------------------------------------------------
 def compute_threshold_from_real(dist_real, percentile=95):
-    """
-    Compute simple percentile threshold from real scores.
-    """
     return np.percentile(dist_real, percentile)
 
 
-# ----------------------------------------------------
-# Fixed threshold evaluation (TPR/FPR/ACC)
-# ----------------------------------------------------
 def evaluate_fixed_threshold(dist_real, dist_spoof, threshold):
-    tp = (dist_real <= threshold).sum()
-    fn = (dist_real > threshold).sum()
+    real_pred_real = dist_real <= threshold
+    real_pred_spoof = dist_spoof <= threshold
 
-    tn = (dist_spoof > threshold).sum()
-    fp = (dist_spoof <= threshold).sum()
+    tp = real_pred_real.sum()
+    fn = (~real_pred_real).sum()
+    fp = real_pred_spoof.sum()
+    tn = (~real_pred_spoof).sum()
 
-    tpr = tp / (tp + fn + 1e-9)
-    fpr = fp / (fp + tn + 1e-9)
-    acc = (tp + tn) / (tp + tn + fp + fn + 1e-9)
+    tpr = tp / (tp + fn + 1e-12)
+    fpr = fp / (fp + tn + 1e-12)
+    acc = (tp + tn) / (tp + tn + fp + fn + 1e-12)
 
-    return dict(TPR=tpr, FPR=fpr, ACC=acc)
+    return float(tpr), float(fpr), float(acc)
 
 
-# ----------------------------------------------------
-# Compute EER (Equal Error Rate)
-# ----------------------------------------------------
 def compute_eer(dist_real, dist_spoof):
+    y = np.concatenate(
+        [np.zeros_like(dist_real, dtype=int), np.ones_like(dist_spoof, dtype=int)]
+    )
     scores = np.concatenate([dist_real, dist_spoof])
-    labels = np.concatenate([np.zeros_like(dist_real), np.ones_like(dist_spoof)])
 
-    thresholds = np.sort(scores)
+    fpr, tpr, thresholds = roc_curve(y, scores)
+    fnr = 1 - tpr
 
-    fprs = []
-    fnrs = []
+    idx = np.nanargmin(np.abs(fnr - fpr))
+    eer = (fnr[idx] + fpr[idx]) / 2.0
+    eer_thr = thresholds[idx]
 
-    for t in thresholds:
-        fp = ((dist_spoof <= t)).sum()
-        tn = ((dist_spoof > t)).sum()
-        fn = ((dist_real > t)).sum()
-        tp = ((dist_real <= t)).sum()
-
-        fpr = fp / (fp + tn + 1e-9)
-        fnr = fn / (fn + tp + 1e-9)
-
-        fprs.append(fpr)
-        fnrs.append(fnr)
-
-    fprs = np.array(fprs)
-    fnrs = np.array(fnrs)
-    diff = np.abs(fprs - fnrs)
-
-    idx = np.argmin(diff)
-    eer = (fprs[idx] + fnrs[idx]) / 2
-    eer_threshold = thresholds[idx]
-
-    return float(eer), float(eer_threshold), float(fprs[idx]), float(fnrs[idx])
+    return float(eer), float(eer_thr)
