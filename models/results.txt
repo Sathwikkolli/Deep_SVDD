@@ -1,9 +1,9 @@
 === Deep SVDD Results ===
 
-Fixed Threshold (95%): 2.629092
+Fixed Threshold (95%): 3.974313
 TPR: 0.948929
-FPR: 0.137405
-ACC: 0.915000
+FPR: 0.002545
+ACC: 0.968000
 
-EER: 0.073963
-EER Threshold: 2.401194
+EER: 0.012503
+EER Threshold: 4.785544

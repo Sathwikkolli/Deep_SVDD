@@ -16,3 +16,13 @@ __pycache__/
 
 # Logs
 *.log
+
+#src
+src/extract_embeddings_ITW.py
+src/InTheWildTest.py
+src/ITW_trump_predictions.csv
+
+embedding
+embeddings_itw
+embeddings_itw_trump
+itw_trump_eval
