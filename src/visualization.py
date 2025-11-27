@@ -8,13 +8,18 @@ from sklearn.decomposition import PCA
 import umap
 import torch
 
+from utils_data import create_eval_loader   # REQUIRED for UMAP
 
+
+# ----------------------------------------------------
+# UTIL
+# ----------------------------------------------------
 def ensure(path):
     os.makedirs(path, exist_ok=True)
 
 
 # ----------------------------------------------------
-# HIST, ROC, DET
+# HISTOGRAM, ROC, DET
 # ----------------------------------------------------
 def plot_hist(dist_real, dist_spoof, save_path):
     plt.figure()
@@ -74,7 +79,7 @@ def visualize(dist_real, dist_spoof, save_dir):
 
 
 # ----------------------------------------------------
-# EXTRACT LATENT (DeepSVDD)
+# LATENT EXTRACTION (Deep-SVDD)
 # ----------------------------------------------------
 @torch.no_grad()
 def extract_latent(model, loader, device="cuda"):
@@ -82,17 +87,16 @@ def extract_latent(model, loader, device="cuda"):
     model.net.eval()
 
     latents = []
-
     for (x_batch,) in loader:
         x_batch = x_batch.to(device)
-        z = model.net(x_batch)  # [B, 128]
+        z = model.net(x_batch)   # 128-d vector
         latents.append(z.cpu().numpy())
 
     return np.concatenate(latents, axis=0)
 
 
 # ----------------------------------------------------
-# UMAP PLOT (colored scatter)
+# UMAP SCATTER
 # ----------------------------------------------------
 def plot_umap(data, labels, title, save_path):
     reducer = umap.UMAP(
@@ -120,7 +124,7 @@ def plot_umap(data, labels, title, save_path):
 
 
 # ----------------------------------------------------
-# FULL UMAP PIPELINE (real vs spoof)
+# FULL UMAP PIPELINE
 # ----------------------------------------------------
 def visualize_umap(
     model,
@@ -132,31 +136,31 @@ def visualize_umap(
 ):
     ensure(save_dir)
 
-    # ==========================
-    # RAW PCA → UMAP (REAL + SPOOF)
-    # ==========================
+    # =============================================
+    # (1) RAW → PCA(128) → UMAP
+    # =============================================
     X_raw = np.concatenate([X_raw_real, X_raw_spoof], axis=0)
     labels_raw = np.concatenate([
-        np.zeros(len(X_raw_real)),   # real = blue
-        np.ones(len(X_raw_spoof))    # spoof = red
+        np.zeros(len(X_raw_real)),
+        np.ones(len(X_raw_spoof)),
     ])
 
-    # PCA down to 128 dims
+    # PCA component count fix (must be ≤ samples)
     pca_dim = min(128, X_raw.shape[1], X_raw.shape[0] - 1)
+
     pca = PCA(n_components=pca_dim, random_state=42)
     X_pca = pca.fit_transform(X_raw)
 
     plot_umap(
         X_pca,
         labels_raw,
-        "UMAP (Raw Embeddings): Real vs Spoof (24,576 → PCA(128) → UMAP)",
+        f"UMAP Raw Embeddings ({X_raw.shape[1]} dims → PCA({pca_dim}) → UMAP)",
         os.path.join(save_dir, "umap_raw.png")
     )
 
-    # ==========================
-    # LATENT 128-dim → UMAP
-    # ==========================
-    # Build loaders for real + spoof
+    # =============================================
+    # (2) LATENT SPACE (SVDD 128-d) → UMAP
+    # =============================================
     real_loader = create_eval_loader(X_raw_real, batch_size=128)
     spoof_loader = create_eval_loader(X_raw_spoof, batch_size=128)
 
@@ -166,20 +170,14 @@ def visualize_umap(
     Z_latent = np.concatenate([Z_real, Z_spoof], axis=0)
     labels_latent = np.concatenate([
         np.zeros(len(Z_real)),
-        np.ones(len(Z_spoof))
+        np.ones(len(Z_spoof)),
     ])
 
     plot_umap(
         Z_latent,
         labels_latent,
-        "UMAP (Deep SVDD Latent Space): Real vs Spoof (128 dims)",
+        "UMAP Deep-SVDD Latent Space (128 dims)",
         os.path.join(save_dir, "umap_latent.png")
     )
 
-    print(f"[UMAP] Saved raw + latent 2-class UMAPs to {save_dir}")
-
-
-# ----------------------------------------------------
-# CREATE EVAL LOADER (local, needed for UMAP)
-# ----------------------------------------------------
-from utils_data import create_eval_loader
+    print(f"[UMAP] Saved raw + latent UMAP plots to {save_dir}")
