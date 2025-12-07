@@ -43,7 +43,6 @@ NU = 0.05
 
 SVDD_EPOCHS = 60
 BATCH_SIZE = 128
-
 LR_SVDD = 1e-4
 WEIGHT_DECAY = 1e-6
 
@@ -62,9 +61,10 @@ def seed_everything(seed=42):
 
 
 # ----------------------------------------------------
-# MAIN
+# MAIN PIPELINE
 # ----------------------------------------------------
 def main():
+
     seed_everything(42)
     os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -76,14 +76,14 @@ def main():
         f"Eval Spoof: {X_eval_spoof.shape}"
     )
 
-    print("\n=== SCALE ===")
+    print("\n=== SCALING ===")
     X_train_s, X_eval_real_s, X_eval_spoof_s, scaler = scale_embeddings(
         X_train, X_eval_real, X_eval_spoof
     )
 
     train_loader = create_train_loader(X_train_s, batch_size=BATCH_SIZE)
-    eval_real_loader = create_eval_loader(X_eval_real_s, batch_size=BATCH_SIZE * 2)
-    eval_spoof_loader = create_eval_loader(X_eval_spoof_s, batch_size=BATCH_SIZE * 2)
+    eval_real_loader = create_eval_loader(X_eval_real_s, batch_size=BATCH_SIZE*2)
+    eval_spoof_loader = create_eval_loader(X_eval_spoof_s, batch_size=BATCH_SIZE*2)
 
     print("\n=== INIT SVDD MODEL ===")
     model = DeepSVDD(
@@ -95,7 +95,7 @@ def main():
         device=DEVICE,
     )
 
-    print("\n=== INIT CENTER ===")
+    print("\n=== INIT CENTER c ===")
     model.init_center_c(train_loader)
 
     print("\n=== TRAIN SVDD ===")
@@ -104,17 +104,17 @@ def main():
         train_loader,
         epochs=SVDD_EPOCHS,
         lr=LR_SVDD,
-        weight_decay=WEIGHT_DECAY,
+        weight_decay=WEIGHT_DECAY
     )
 
-    print("\n=== EVAL ===")
-    dist_real = compute_scores(model, eval_real_loader)
+    print("\n=== EVALUATION ===")
+    dist_real  = compute_scores(model, eval_real_loader)
     dist_spoof = compute_scores(model, eval_spoof_loader)
 
     thr = compute_threshold_from_real(dist_real, percentile=95)
     tpr, fpr, acc = evaluate_fixed_threshold(dist_real, dist_spoof, thr)
 
-    print("\n--- FIXED THRESHOLD ---")
+    print("\n--- FIXED THRESHOLD METRICS ---")
     print(f"Threshold: {thr:.6f}")
     print(f"TPR: {tpr:.6f}")
     print(f"FPR: {fpr:.6f}")
@@ -122,38 +122,32 @@ def main():
 
     eer, eer_thr = compute_eer(dist_real, dist_spoof)
 
-    print("\n--- EER ---")
+    print("\n--- EER METRICS ---")
     print(f"EER: {eer:.6f}")
     print(f"EER Threshold: {eer_thr:.6f}")
 
+    # Save results file
     results_file = os.path.join(SAVE_DIR, "results.txt")
     with open(results_file, "w") as f:
         f.write("=== Deep SVDD Results ===\n\n")
-        f.write(f"Fixed Threshold (95%): {thr:.6f}\n")
-        f.write(f"TPR: {tpr:.6f}\n")
-        f.write(f"FPR: {fpr:.6f}\n")
-        f.write(f"ACC: {acc:.6f}\n\n")
-        f.write(f"EER: {eer:.6f}\n")
-        f.write(f"EER Threshold: {eer_thr:.6f}\n")
+        f.write(f"Fixed Threshold(95%):  {thr:.6f}\n")
+        f.write(f"TPR: {tpr:.6f}\nFPR: {fpr:.6f}\nACC: {acc:.6f}\n\n")
+        f.write(f"EER: {eer:.6f}\nEER Threshold: {eer_thr:.6f}\n")
+    print(f"[SAVED] metrics → {results_file}")
 
-    print(f"[RESULTS] Saved → {results_file}")
 
     print("\n=== VISUALIZATION ===")
-    visualize(dist_real, dist_spoof, PLOTS_DIR)
+    visualize(dist_real, dist_spoof)
 
-    print("\n=== UMAP ===")
-    visualize_umap(
-        model=model,
-        X_raw_real=X_eval_real_s,
-        X_raw_spoof=X_eval_spoof_s,
-        train_loader_latent=train_loader,
-        save_dir=PLOTS_DIR,
-        device=DEVICE,
-    )
 
+    print("\n=== UMAP VISUALIZATION ===")
+    visualize_umap(model, X_eval_real_s, X_eval_spoof_s, device=DEVICE)
+
+
+    # Save model
     model_path = os.path.join(SAVE_DIR, "deep_svdd_trump.pt")
     model.save_state(model_path, scaler=scaler)
-    print(f"\nSaved model → {model_path}")
+    print(f"\n[SAVED MODEL] → {model_path}")
 
 
 if __name__ == "__main__":

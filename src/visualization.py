@@ -1,5 +1,3 @@
-# src/visualization.py
-
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,98 +5,89 @@ from sklearn.metrics import roc_curve, auc, DetCurveDisplay
 from sklearn.decomposition import PCA
 import umap
 import torch
-
-from utils_data import create_eval_loader   # REQUIRED for UMAP
-
-
-# ----------------------------------------------------
-# UTIL
-# ----------------------------------------------------
-def ensure(path):
-    os.makedirs(path, exist_ok=True)
+from utils_data import create_eval_loader
 
 
-# ----------------------------------------------------
-# HISTOGRAM, ROC, DET
-# ----------------------------------------------------
-def plot_hist(dist_real, dist_spoof, save_path):
+# ======================================================
+#  ✨ FIX: force save path to /models/results ALWAYS
+# ======================================================
+BASE_SAVE = os.path.join(os.getcwd(), "models", "results")
+
+def ensure():
+    os.makedirs(BASE_SAVE, exist_ok=True)
+    return BASE_SAVE
+
+
+# ======================================================
+# HISTOGRAM + ROC + DET
+# ======================================================
+def visualize(dist_real, dist_spoof):
+
+    save_dir = ensure()   # <--- folder is created correctly
+
+    # ---------- HIST ----------
     plt.figure()
-    plt.hist(dist_real, bins=50, alpha=0.5, label="Real")
-    plt.hist(dist_spoof, bins=50, alpha=0.5, label="Spoof")
+    plt.hist(dist_real, bins=60, alpha=0.55, label="Real")
+    plt.hist(dist_spoof, bins=60, alpha=0.55, label="Spoof")
     plt.xlabel("SVDD Distance")
     plt.ylabel("Count")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(f"{save_dir}/hist.png")
     plt.close()
 
-
-def plot_roc(dist_real, dist_spoof, save_path):
-    y = np.concatenate([
-        np.zeros_like(dist_real, dtype=int),
-        np.ones_like(dist_spoof, dtype=int)
-    ])
+    # ---------- ROC ----------
+    y = np.concatenate([np.zeros_like(dist_real), np.ones_like(dist_spoof)])
     scores = np.concatenate([dist_real, dist_spoof])
-
     fpr, tpr, _ = roc_curve(y, scores)
     roc_auc = auc(fpr, tpr)
 
     plt.figure()
-    plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.4f}")
-    plt.plot([0, 1], [0, 1], "--")
-    plt.xlabel("FPR")
-    plt.ylabel("TPR")
+    plt.plot(fpr, tpr, label=f"AUC={roc_auc:.4f}")
+    plt.plot([0,1],[0,1],'--')
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
     plt.title("ROC Curve")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(f"{save_dir}/roc_curve.png")
     plt.close()
 
-
-def plot_det(dist_real, dist_spoof, save_path):
-    y = np.concatenate([
-        np.zeros_like(dist_real, dtype=int),
-        np.ones_like(dist_spoof, dtype=int)
-    ])
-    scores = np.concatenate([dist_real, dist_spoof])
-
+    # ---------- DET ----------
     plt.figure()
     DetCurveDisplay.from_predictions(y, scores)
     plt.title("DET Curve")
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(f"{save_dir}/det_curve.png")
     plt.close()
 
-
-def visualize(dist_real, dist_spoof, save_dir):
-    ensure(save_dir)
-    plot_hist(dist_real, dist_spoof, os.path.join(save_dir, "hist.png"))
-    plot_roc(dist_real, dist_spoof, os.path.join(save_dir, "roc.png"))
-    plot_det(dist_real, dist_spoof, os.path.join(save_dir, "det.png"))
-    print(f"[VIS] Saved basic plots to {save_dir}")
+    print(f"[+] Histogram, ROC, DET saved →  {save_dir}")
 
 
-# ----------------------------------------------------
-# LATENT EXTRACTION (Deep-SVDD)
-# ----------------------------------------------------
+# ======================================================
+# LATENT EXTRACTION
+# ======================================================
 @torch.no_grad()
 def extract_latent(model, loader, device="cuda"):
-    device = torch.device(device)
     model.net.eval()
+    device = torch.device(device)
 
     latents = []
     for (x_batch,) in loader:
         x_batch = x_batch.to(device)
-        z = model.net(x_batch)   # 128-d vector
+        z = model.net(x_batch)
         latents.append(z.cpu().numpy())
 
-    return np.concatenate(latents, axis=0)
+    return np.concatenate(latents)
 
 
-# ----------------------------------------------------
-# UMAP SCATTER
-# ----------------------------------------------------
-def plot_umap(data, labels, title, save_path):
+# ======================================================
+# UMAP PLOTTING
+# ======================================================
+def plot_umap(data, labels, name):
+
+    save_dir = ensure()
+
     reducer = umap.UMAP(
         n_neighbors=20,
         min_dist=0.1,
@@ -108,76 +97,41 @@ def plot_umap(data, labels, title, save_path):
 
     emb = reducer.fit_transform(data)
 
-    plt.figure(figsize=(7, 6))
-    plt.scatter(
-        emb[:, 0],
-        emb[:, 1],
-        c=labels,
-        cmap="coolwarm",
-        s=8,
-        alpha=0.85
-    )
-    plt.title(title)
+    plt.figure(figsize=(6,6))
+    plt.scatter(emb[:,0], emb[:,1], c=labels, cmap="coolwarm", s=10, alpha=0.85)
+    plt.title(name)
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(f"{save_dir}/{name}.png")
     plt.close()
 
 
-# ----------------------------------------------------
-# FULL UMAP PIPELINE
-# ----------------------------------------------------
-def visualize_umap(
-    model,
-    X_raw_real,
-    X_raw_spoof,
-    train_loader_latent,
-    save_dir,
-    device="cuda"
-):
-    ensure(save_dir)
+# ======================================================
+# UMAP COMPLETE PIPELINE
+# ======================================================
+def visualize_umap(model, X_real, X_spoof, device="cuda"):
 
-    # =============================================
-    # (1) RAW → PCA(128) → UMAP
-    # =============================================
-    X_raw = np.concatenate([X_raw_real, X_raw_spoof], axis=0)
-    labels_raw = np.concatenate([
-        np.zeros(len(X_raw_real)),
-        np.ones(len(X_raw_spoof)),
-    ])
+    save_dir = ensure()
 
-    # PCA component count fix (must be ≤ samples)
-    pca_dim = min(128, X_raw.shape[1], X_raw.shape[0] - 1)
+    # ---------- RAW Embeddings → PCA → UMAP ----------
+    X = np.concatenate([X_real, X_spoof])
+    labels = np.concatenate([np.zeros(len(X_real)), np.ones(len(X_spoof))])
 
-    pca = PCA(n_components=pca_dim, random_state=42)
-    X_pca = pca.fit_transform(X_raw)
+    pca_dim = min(128, X.shape[1], len(X)-1)
+    X_pca = PCA(n_components=pca_dim).fit_transform(X)
 
-    plot_umap(
-        X_pca,
-        labels_raw,
-        f"UMAP Raw Embeddings ({X_raw.shape[1]} dims → PCA({pca_dim}) → UMAP)",
-        os.path.join(save_dir, "umap_raw.png")
-    )
+    plot_umap(X_pca, labels, f"UMAP_RAW_PCA_{pca_dim}")
 
-    # =============================================
-    # (2) LATENT SPACE (SVDD 128-d) → UMAP
-    # =============================================
-    real_loader = create_eval_loader(X_raw_real, batch_size=128)
-    spoof_loader = create_eval_loader(X_raw_spoof, batch_size=128)
 
-    Z_real = extract_latent(model, real_loader, device=device)
+    # ---------- LATENT 128-D → UMAP ----------
+    real_loader  = create_eval_loader(X_real,  batch_size=128)
+    spoof_loader = create_eval_loader(X_spoof, batch_size=128)
+
+    Z_real  = extract_latent(model, real_loader,  device=device)
     Z_spoof = extract_latent(model, spoof_loader, device=device)
 
-    Z_latent = np.concatenate([Z_real, Z_spoof], axis=0)
-    labels_latent = np.concatenate([
-        np.zeros(len(Z_real)),
-        np.ones(len(Z_spoof)),
-    ])
+    Z = np.concatenate([Z_real, Z_spoof])
+    Z_labels = np.concatenate([np.zeros(len(Z_real)), np.ones(len(Z_spoof))])
 
-    plot_umap(
-        Z_latent,
-        labels_latent,
-        "UMAP Deep-SVDD Latent Space (128 dims)",
-        os.path.join(save_dir, "umap_latent.png")
-    )
+    plot_umap(Z, Z_labels, "UMAP_LATENT_128")
 
-    print(f"[UMAP] Saved raw + latent UMAP plots to {save_dir}")
+    print(f"[+] UMAP plots saved →  {save_dir}")
