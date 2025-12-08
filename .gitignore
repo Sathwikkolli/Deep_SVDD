@@ -21,3 +21,5 @@ __pycache__/
 
 # ========== JUNK FILES ==========
 .DS_Store
+
+src/extract_embeddings_ITW.py
